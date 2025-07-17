@@ -38,33 +38,90 @@ try {
     console.log('正在点击服务器详情链接...')
     await page.locator('a[href^="/xapanel/xvps/server/detail?id="]').click()
     
-    // 增加等待和调试
+    // 使用 Puppeteer 的正确等待方法
     console.log('等待页面加载完成...')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState ? page.waitForLoadState('networkidle') : page.waitForTimeout(3000)
+    
+    // 或者直接使用 waitForTimeout 和 waitForSelector
+    await page.waitForTimeout(3000) // 等待3秒
     
     // 检查页面内容
-    const pageContent = await page.content()
     console.log('当前页面标题:', await page.title())
     
-    // 尝试找到"更新する"按钮
-    const updateButtons = await page.$$('*:has-text("更新する")')
-    console.log('找到的"更新する"按钮数量:', updateButtons.length)
-    
-    if (updateButtons.length === 0) {
-        // 如果没找到，尝试其他可能的选择器
-        const allButtons = await page.$$('button, input[type="submit"], a')
-        console.log('页面上所有按钮/链接的文本:')
-        for (const button of allButtons) {
-            const text = await button.textContent()
-            if (text && text.trim()) {
-                console.log('-', text.trim())
-            }
+    // 尝试找到"更新する"按钮 - 使用 Puppeteer 的方法
+    try {
+        await page.waitForSelector('*', { timeout: 5000 }) // 确保页面有内容
+        
+        // 获取页面上所有可点击元素的文本
+        const clickableElements = await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a'))
+            return elements.map(el => ({
+                tagName: el.tagName,
+                text: el.textContent?.trim() || el.value || '',
+                className: el.className,
+                id: el.id
+            })).filter(el => el.text)
+        })
+        
+        console.log('页面上所有可点击元素:')
+        clickableElements.forEach(el => {
+            console.log(`- ${el.tagName}: "${el.text}" (class: ${el.className}, id: ${el.id})`)
+        })
+        
+        // 检查是否存在包含"更新"的元素
+        const updateElement = clickableElements.find(el => el.text.includes('更新'))
+        if (!updateElement) {
+            throw new Error('未找到包含"更新"的按钮')
         }
-        throw new Error('未找到"更新する"按钮')
+        
+        console.log('找到更新按钮:', updateElement)
+        
+    } catch (checkError) {
+        console.error('检查页面元素时出错:', checkError)
     }
     
-    // 使用更具体的选择器或者增加超时时间
-    await page.locator('text=更新する').click({ timeout: 60000 })
+    // 尝试多种选择器来点击"更新する"按钮
+    let clickSuccess = false
+    const updateSelectors = [
+        'text=更新する',
+        'button:contains("更新")',
+        'input[value*="更新"]',
+        'a:contains("更新")',
+        '*:contains("更新する")'
+    ]
+    
+    for (const selector of updateSelectors) {
+        try {
+            console.log(`尝试使用选择器: ${selector}`)
+            await page.locator(selector).click({ timeout: 10000 })
+            clickSuccess = true
+            console.log('成功点击更新按钮')
+            break
+        } catch (e) {
+            console.log(`选择器 ${selector} 失败:`, e.message)
+        }
+    }
+    
+    if (!clickSuccess) {
+        // 如果所有选择器都失败，尝试使用 evaluate 直接点击
+        try {
+            await page.evaluate(() => {
+                const elements = Array.from(document.querySelectorAll('*'))
+                const updateBtn = elements.find(el => 
+                    el.textContent && el.textContent.includes('更新') && 
+                    (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT')
+                )
+                if (updateBtn) {
+                    updateBtn.click()
+                    return true
+                }
+                return false
+            })
+            console.log('使用 evaluate 方法点击更新按钮')
+        } catch (e) {
+            throw new Error('无法找到或点击更新按钮')
+        }
+    }
     
     console.log('正在点击继续使用免费VPS...')
     await page.locator('text=引き続き無料VPSの利用を継続する').click()
@@ -80,7 +137,12 @@ try {
 } catch (e) {
     console.error('发生错误:', e)
     // 截图保存错误状态
-    await page.screenshot({ path: 'error-screenshot.png' })
+    try {
+        await page.screenshot({ path: 'error-screenshot.png', fullPage: true })
+        console.log('错误截图已保存到 error-screenshot.png')
+    } catch (screenshotError) {
+        console.error('截图失败:', screenshotError)
+    }
 } finally {
     await setTimeout(5000)
     await recorder.stop()
