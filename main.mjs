@@ -38,78 +38,108 @@ try {
     console.log('正在点击服务器详情链接...')
     await page.locator('a[href^="/xapanel/xvps/server/detail?id="]').click()
     
-    // 使用 Puppeteer 的正确等待方法
+    // 等待页面加载完成
     console.log('等待页面加载完成...')
-    await page.waitForLoadState ? page.waitForLoadState('networkidle') : page.waitForTimeout(3000)
-    
-    // 或者直接使用 waitForTimeout 和 waitForSelector
-    await page.waitForTimeout(3000) // 等待3秒
+    await setTimeout(3000) // 使用Node.js的setTimeout
     
     // 检查页面内容
     console.log('当前页面标题:', await page.title())
+    console.log('当前页面URL:', page.url())
     
-    // 尝试找到"更新する"按钮 - 使用 Puppeteer 的方法
-    try {
-        await page.waitForSelector('*', { timeout: 5000 }) // 确保页面有内容
+    // 获取页面上所有可点击元素的文本
+    const clickableElements = await page.evaluate(() => {
+        const elements = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a'))
+        return elements.map(el => ({
+            tagName: el.tagName,
+            text: el.textContent?.trim() || el.value || '',
+            className: el.className,
+            id: el.id,
+            href: el.href || ''
+        })).filter(el => el.text)
+    })
+    
+    console.log('页面上所有可点击元素:')
+    clickableElements.forEach((el, index) => {
+        console.log(`[${index}] ${el.tagName}: "${el.text}" (class: ${el.className}, id: ${el.id})`)
+    })
+    
+    // 检查是否存在包含"更新"的元素
+    const updateElements = clickableElements.filter(el => 
+        el.text.includes('更新') || el.text.includes('update')
+    )
+    
+    if (updateElements.length === 0) {
+        console.log('未找到包含"更新"的按钮，尝试查找其他相关按钮...')
+        // 查找可能的相关按钮
+        const relatedElements = clickableElements.filter(el => 
+            el.text.includes('継続') || el.text.includes('延長') || el.text.includes('更新')
+        )
+        console.log('相关按钮:', relatedElements)
         
-        // 获取页面上所有可点击元素的文本
-        const clickableElements = await page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a'))
-            return elements.map(el => ({
-                tagName: el.tagName,
-                text: el.textContent?.trim() || el.value || '',
-                className: el.className,
-                id: el.id
-            })).filter(el => el.text)
-        })
-        
-        console.log('页面上所有可点击元素:')
-        clickableElements.forEach(el => {
-            console.log(`- ${el.tagName}: "${el.text}" (class: ${el.className}, id: ${el.id})`)
-        })
-        
-        // 检查是否存在包含"更新"的元素
-        const updateElement = clickableElements.find(el => el.text.includes('更新'))
-        if (!updateElement) {
-            throw new Error('未找到包含"更新"的按钮')
+        if (relatedElements.length === 0) {
+            // 保存页面HTML以供调试
+            const html = await page.content()
+            console.log('页面HTML长度:', html.length)
+            
+            throw new Error('未找到任何相关的按钮')
         }
-        
-        console.log('找到更新按钮:', updateElement)
-        
-    } catch (checkError) {
-        console.error('检查页面元素时出错:', checkError)
+    } else {
+        console.log('找到的更新相关按钮:', updateElements)
     }
     
-    // 尝试多种选择器来点击"更新する"按钮
+    // 尝试多种方法来点击"更新する"按钮
     let clickSuccess = false
-    const updateSelectors = [
-        'text=更新する',
-        'button:contains("更新")',
-        'input[value*="更新"]',
-        'a:contains("更新")',
-        '*:contains("更新する")'
-    ]
     
-    for (const selector of updateSelectors) {
+    // 方法1: 使用locator (原始方法)
+    try {
+        console.log('方法1: 尝试使用 locator...')
+        const updateBtn = page.locator('text=更新する')
+        await updateBtn.click({ timeout: 10000 })
+        clickSuccess = true
+        console.log('成功使用locator点击更新按钮')
+    } catch (e) {
+        console.log('方法1失败:', e.message)
+    }
+    
+    // 方法2: 使用传统的page.click方法
+    if (!clickSuccess) {
         try {
-            console.log(`尝试使用选择器: ${selector}`)
-            await page.locator(selector).click({ timeout: 10000 })
+            console.log('方法2: 尝试使用传统click方法...')
+            await page.click('button:contains("更新する"), input[value*="更新"], a:contains("更新する")')
             clickSuccess = true
-            console.log('成功点击更新按钮')
-            break
+            console.log('成功使用传统click方法')
         } catch (e) {
-            console.log(`选择器 ${selector} 失败:`, e.message)
+            console.log('方法2失败:', e.message)
         }
     }
     
+    // 方法3: 使用XPath
     if (!clickSuccess) {
-        // 如果所有选择器都失败，尝试使用 evaluate 直接点击
         try {
-            await page.evaluate(() => {
-                const elements = Array.from(document.querySelectorAll('*'))
+            console.log('方法3: 尝试使用XPath...')
+            const xpath = '//button[contains(text(), "更新")] | //input[contains(@value, "更新")] | //a[contains(text(), "更新")]'
+            const [button] = await page.$x(xpath)
+            if (button) {
+                await button.click()
+                clickSuccess = true
+                console.log('成功使用XPath点击更新按钮')
+            } else {
+                console.log('XPath未找到匹配元素')
+            }
+        } catch (e) {
+            console.log('方法3失败:', e.message)
+        }
+    }
+    
+    // 方法4: 直接在页面中执行点击
+    if (!clickSuccess) {
+        try {
+            console.log('方法4: 尝试直接执行点击...')
+            const clicked = await page.evaluate(() => {
+                const elements = Array.from(document.querySelectorAll('button, input, a'))
                 const updateBtn = elements.find(el => 
-                    el.textContent && el.textContent.includes('更新') && 
-                    (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT')
+                    (el.textContent && el.textContent.includes('更新')) ||
+                    (el.value && el.value.includes('更新'))
                 )
                 if (updateBtn) {
                     updateBtn.click()
@@ -117,11 +147,22 @@ try {
                 }
                 return false
             })
-            console.log('使用 evaluate 方法点击更新按钮')
+            
+            if (clicked) {
+                clickSuccess = true
+                console.log('成功使用evaluate方法点击更新按钮')
+            }
         } catch (e) {
-            throw new Error('无法找到或点击更新按钮')
+            console.log('方法4失败:', e.message)
         }
     }
+    
+    if (!clickSuccess) {
+        throw new Error('所有点击方法都失败了')
+    }
+    
+    // 等待页面响应
+    await setTimeout(2000)
     
     console.log('正在点击继续使用免费VPS...')
     await page.locator('text=引き続き無料VPSの利用を継続する').click()
